@@ -1,32 +1,62 @@
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.PublicKey import RSA
+import rsa
+import os
+import binascii
+import hashlib
+import base64
+
+instructionDict= {
+    
+    }
 
 #generateKey
 def generateKey():
-    return RSA.generate(1024)
+    #returns (pubkey, privkey)
+    return rsa.newkeys(1024)
     
-
 
 def encrypt(message,publicKey):
     #encrypt
-    cipher = PKCS1_OAEP.new(publicKey)
-    ciphertext = cipher.encrypt(message)
-    return ciphertext
+    ciphertext = rsa.encrypt(message.encode(), publicKey)
+    return ciphertext #bytes
 
 def decrypt(ciphertext,privateKey):
     #decrypt
-    cipher = PKCS1_OAEP.new(privateKey)
-    message = cipher.decrypt(ciphertext)
-    return message
+    message = rsa.decrypt(ciphertext, privateKey)
+    return message #bytes
 
-def importKey(key):
-    return RSA.importKey(open(key).read()) #key is a file
+def importPrivateKey(fileName):
+    with open(fileName,'rb') as privatefile:
+        keydata = privatefile.read()
+    return rsa.PrivateKey.load_pkcs1(keydata)
+    
+def importPubKey(fileName):
+    with open(fileName,'rb') as privatefile:
+        keydata = privatefile.read()
+    return rsa.PublicKey.load_pkcs1(keydata)
 
-def exportKey(fileName,key,private=False):
-    f = open(fileName,'w')
-    if(private):
-        f.write(key.exportKey('PEM'))
-    else:
-        f.write(key.publickey().exportKey('PEM'))
+def exportPriv(fileName,key):
+    f = open(fileName,'wb')
+    f.write(rsa.PrivateKey.save_pkcs1(key))
     f.close()
     
+def exportPub(fileName,key):
+    f = open(fileName,'wb')
+    f.write(rsa.PublicKey.save_pkcs1(key))
+    f.close()
+
+    
+def hashPassword(password):
+    #returns an array containing a hashed password and the salt used
+    salt = os.urandom(16)
+    password = base64.b64encode(password.encode())
+
+    hashed_pass = hashlib.pbkdf2_hmac('sha256',password,salt,100000)
+    hashed_pass = binascii.hexlify(hashed_pass)
+    salt = binascii.hexlify(salt)
+    return hashed_pass.decode(),salt.decode()
+
+"""
+(mypub, mypriv) = generateKey()
+exportPriv('privateKey.txt',mypriv)
+exportPriv('publicKey.txt',mypub)
+"""

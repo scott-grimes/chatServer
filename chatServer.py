@@ -9,15 +9,17 @@ keepAlive = 'keepAlive'
 
 
 login procedure
-client sends plaintext login request 'login_request:USERNAME'
-server responds with users salt and the public key for encrypting = 'salt:SALT:PUBLICKEY'
-client sends encrypted login request 'login_credentials:(USER:PASS) where () is encrypted'
+client sends plaintext login request 'R USERNAME'
+server responds with users salt and the public key for encrypting = 'S SALT PUBLICKEY'
+client sends encrypted login request 'C (USER PASS) where () is encrypted'
+server responeds with 'L pass' or 'L fail'
 
 new user procedure
-client sends new user request 'new_user:(USERNAME:PASS:SALT) where () is encrypted'
+client sends new user request 'N (USERNAME PASS SALT) where () is encrypted'
+server responds 'N pass' or 'N fail' or 'N exits' for success, failiure, or user already exists
 
-change password procedure
-client sends 'change_pass:USER:OLDPASS:NEWPASS'
+modify password procedure
+client sends 'M USER OLDPASS NEWPASS'
 
 """
 
@@ -37,7 +39,7 @@ RECV_BUFFER = 4096
 SOCKET_LIST = []
 USER_LIST = [] 
 
-
+DEBUG = True
     
             
 def broadcast(server,sock,message):
@@ -56,10 +58,9 @@ def print_all_users():
     print('printing all users')
     cursor = db.execute("SELECT * from LOGINDATA")
     for row in cursor:
-        print(row)
-        print("USER = "+ row[0]+", type:"+type(row[0]))
-        print ("PASS = "+row[1]+", type:"+type(row[1]))
-        print ("SALT = "+row[2]+", type:"+type(row[2]))
+        print("USER = "+ row[0])
+        print ("PASS = "+row[1])
+        print ("SALT = "+row[2])
         print("")
 
 def user_is_in_database(name):
@@ -86,8 +87,8 @@ def checkPass(name, password):
     cursor = db.execute("SELECT * from LOGINDATA WHERE USERNAME IS ?",(name,))
     row = cursor.fetchone()
     if row is not None:
-        hashed = hashlib.pbkdf2_hmac('sha256',password.encode('base64'),binascii.unhexlify(row[2]),100000)
-        if row[1] == binascii.hexlify(hashed):
+        hashed = hashlib.pbkdf2_hmac('sha256',base64.b64encode(password.encode()),binascii.unhexlify(row[2]),100000)
+        if row[1] == binascii.hexlify(hashed).decode('utf-8'):
             return True
     return False
 
@@ -97,16 +98,11 @@ def changePass_server_side(input):
     newPassword = input[2]
     if(checkPass(name,password)):
         try:
-            salt = os.urandom(16)
-            password = newPassword.encode('base64')
-        
-            hashed_pass = hashlib.pbkdf2_hmac('sha256',password,salt,100000)
-            hashed_pass = binascii.hexlify(hashed_pass)
-            salt = binascii.hexlify(salt)
+            hashed_passed, salt = hashPassword(password)
             db.execute("""UPDATE LOGINDATA     
                 SET PASS = ?,    
                     SALT = ?
-                WHERE USERNAME = ?;""",(hashed_pass.decode('base64'),salt.decode('base64'),name,))
+                WHERE USERNAME = ?;""",((hashed_passed,salt,name,)))
             db.commit()
             print('pass changed')
             return True
@@ -123,57 +119,71 @@ def getSalt(name):
     return 'None'
 
 def decodeMessage(message):
-    privateKey = importKey('privateKey.txt')
-    return decrypt(message,privateKey)
+    privateKey = importPrivateKey('privateKey.txt')
+    return decrypt(message,privateKey).decode('utf-8')
     
 
 def processMessage(message,sock):
-    message = message.split(':',1)
-    
-    if message[0] == 'login_request':
-        salt = str(getSalt(message[1]))
-        publicKey = importKey('publicKey.txt')
-        reply = 'salt:'+salt+':'+publicKey.exportKey('OpenSSH')
-            
-        sock.sendall(reply.encode('base64'))
+    instruction = chr(message[0])
+
+    if  instruction is 'R':
+
+        #message format is login_request:name:(padding):
+        parsed = message.decode('utf-8').split(' ')
+        name = message[1]
+        salt = str(getSalt(name))
+        publicKey = importPubKey('publicKey.txt')
+        key = rsa.PublicKey.save_pkcs1(publicKey)
+        reply = 'S '+salt+' '
+        reply = reply.encode('utf-8')+key
+        send_message(sock,reply)
         return
     
-    if message[0] == 'login_credentials':
-        
+    if instruction is 'C':
+        #message format is C encrypted 
         try:
-            decrypted = decodeMessage(message[1]).split(':')
+            decrypted = decodeMessage(message[2:]).split(' ')
+            #decrypted is "name password"
             login_sucessful = checkPass(decrypted[0],decrypted[1])
-        
             if(login_sucessful):
-            
-                sock.sendall("login:success".encode('base64'))
+                send_message(sock,"L pass")
             else:
-                sock.sendall("login:failure".encode('base64'))
+                send_message(sock,"L fail")
         except Exception as e:
             print(e)
         return
     
     
-    if message[0] == 'new_user':
-        parsed = message[1].split(':')
+    if instruction is 'N':
+        #message format is N name password salt 
+        parsed = message.decode('utf-8').split(' ')[1:]
+        #parsed is now [name, pass, salt]
         if(user_is_in_database(parsed[0])):
-            sock.sendall("userExists".encode('base64'))
+            send_message(sock,"N exists")
         else:
             if(add_user_serverSide(parsed)):
-                sock.sendall("newUserSucess".encode('base64'))
+                send_message(sock,"N pass")
             else:
-                sock.sendall("newUserFailure".encode('base64'))
+                send_message(sock,"N fail")
         return
     
-    if message[0] == 'change_pass':
+    if instruction == 'change_pass':
+        #message format is change_pass:user:oldpass:newpass
         if(user_is_in_database(message[1])):
             if(changePass_server_side(message[1:])):
-                sock.sendall("changePassSucess".encode('base64'))
-            else:
-                sock.sendall("changePassFailure".encode('base64'))
+                send_message(sock,"changePassSucess")            
+        else:
+                send_message(sock,"changePassFailure")
         return
         
-
+def send_message(sock,message):
+    if (type(message) is bytes):
+        sock.sendall(message)
+    else:
+        sock.sendall(message.encode('utf-8'))
+    
+    if(DEBUG):
+        print(message.encode('utf-8'))
     
     
 def chat_server():
@@ -202,9 +212,10 @@ def chat_server():
             #a message from a client
             else:
                 try:
-                    data = sock.recv(RECV_BUFFER).decode('base64').strip('\n')
+                    data = sock.recv(RECV_BUFFER)
                     if data:
                         processMessage(data,sock)   
+                        
                     else:
                         if sock in SOCKET_LIST:
                             SOCKET_LIST.remove(sock)
