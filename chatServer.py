@@ -21,6 +21,11 @@ server responds 'N pass' or 'N fail' or 'N exits' for success, failiure, or user
 modify password procedure
 client sends 'M USER OLDPASS NEWPASS'
 
+sending text
+client sock sends 'T text' to server
+server sends 'T text' to all clients
+
+
 """
 
 db = sqlite3.connect('logins.db')
@@ -37,17 +42,20 @@ HOST = ''
 PORT = 8888
 RECV_BUFFER = 4096
 SOCKET_LIST = []
-USER_LIST = [] 
-
-DEBUG = True
+UserDict = {}
+DEBUG = False
+SERVER = None
     
             
-def broadcast(server,sock,message):
+def broadcast(sock,message):
     #sends a message to everyone on the server
     for socket in SOCKET_LIST:
-        if socket is not server and socket is not sock:
+        if socket is not SERVER:# and socket is not sock:
             try:
-                socket.sendall(message)
+                send_message(socket, message)
+                if(DEBUG):
+                    print('sent a message')
+                    print(message)
             except:
                 socket.close()
                 if socket in SOCKET_LIST:
@@ -147,6 +155,8 @@ def processMessage(message,sock):
             login_sucessful = checkPass(decrypted[0],decrypted[1])
             if(login_sucessful):
                 send_message(sock,"L pass")
+                global UserDict
+                UserDict[sock] = decrypted[0]
             else:
                 send_message(sock,"L fail")
         except Exception as e:
@@ -167,14 +177,26 @@ def processMessage(message,sock):
                 send_message(sock,"N fail")
         return
     
-    if instruction == 'change_pass':
+    if  instruction is 'T':
+        #new message to transmit to all clients
+        #format is T ID, Text
+        message = message.decode('utf-8').split(' ',1)[1:]
+        name = UserDict[sock]
+        broadcast(sock,"T "+name+": "+message[0])
+        
+        
+        pass
+    
+    if instruction == 'M':
         #message format is change_pass:user:oldpass:newpass
-        if(user_is_in_database(message[1])):
+        parsed = message.decode('utf-8').split(' ')[1:]
+        if(user_is_in_database(parsed[0])):
             if(changePass_server_side(message[1:])):
                 send_message(sock,"changePassSucess")            
         else:
                 send_message(sock,"changePassFailure")
         return
+    
         
 def send_message(sock,message):
     if (type(message) is bytes):
@@ -183,7 +205,8 @@ def send_message(sock,message):
         sock.sendall(message.encode('utf-8'))
     
     if(DEBUG):
-        print(message.encode('utf-8'))
+        print('sending : ', end='')
+        print(message)
     
     
 def chat_server():
@@ -193,6 +216,8 @@ def chat_server():
         s.bind((HOST,PORT))
         s.listen(10)
         print("Server Started on PORT {}".format(PORT))
+        global SERVER
+        SERVER = s
         
     except Exception as e:
         print(e)
@@ -214,17 +239,21 @@ def chat_server():
                 try:
                     data = sock.recv(RECV_BUFFER)
                     if data:
+                        if(DEBUG):
+                            print('recieved: ', end='')
+                            print(data)
                         processMessage(data,sock)   
                         
                     else:
                         if sock in SOCKET_LIST:
                             SOCKET_LIST.remove(sock)
-                        broadcast(s,sock,"{} is offline".format(sock.address))
+                        broadcast(sock,"{} is offline".format(sock.address))
                 except:
                     #broadcast(s,sock,"client disconnected")
                     continue
     s.close()
     
+
 if __name__ == "__main__":
     
     sys.exit(chat_server())

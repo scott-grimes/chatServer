@@ -9,11 +9,13 @@ RECV_BUFFER = 4096
 s = None
 KEY = None
 SALT = None
-DEBUG = True
+DEBUG = False
+messageCount = 0
+loggedIn = False
 
 def processMessage(message):
     if(DEBUG):
-        print('recieved:')
+        print('recieved:', end='')
         print(message)
     
     instruction = chr(message[0])
@@ -29,6 +31,17 @@ def processMessage(message):
     
     if(instruction is 'L'):
         login_status = message.decode('utf-8').split(' ')[1]
+        if(login_status == 'pass'):
+            print('login successful: Welcome {}'.format(userName))
+            global loggedIn
+            loggedIn = True
+            
+        else:
+            print('login failed')
+    if(instruction is 'T'):
+        message = message.decode('utf-8').split(' ',1)[1].strip('\n')
+        print(message)
+        
             
 
 def add_user_clientSide(name, password,sock):
@@ -39,11 +52,13 @@ def add_user_clientSide(name, password,sock):
 
 def login(name,password,sock):
     
-    global KEY
+    global KEY, userName
+    userName = name
     while KEY is None:
         message = ['R',name]
         send_msg(sock,message)
         time.sleep(1)
+    
     raw_text = name+' '+password
     encrypted_credentials = encrypt(raw_text,KEY)
     message = 'C '
@@ -58,6 +73,7 @@ def send_msg(sock,message):
         sock.sendall(message.encode('utf-8'))
     
     if(DEBUG):
+        print('sending: ', end='')
         print(message)
     
     
@@ -71,6 +87,17 @@ def recv_msg(sock):
             except socket.timeout:
                 pass
             
+def read_in_input_msg(sock):
+        while True:
+            try:
+                msg = sys.stdin.readline()
+                msg = 'T '+msg
+                send_msg(sock,msg.encode('utf-8'))
+            except Exception as e:
+                print(e)
+                pass
+
+
 def chatClient():
     host = 'localhost'
     port = 8888
@@ -84,15 +111,24 @@ def chatClient():
         print(e)
         sys.exit()  
         
-    
         
     Thread(target=recv_msg, args=(s,)).start()
-    add_user_clientSide("bob","1234",s)
-    login("bob","1234",s)
+    Thread(target=read_in_input_msg, args=(s,)).start()
+    
+    
+    demo_instructions(s)
+    
     while True:
+        
         pass 
     
-    
+def demo_instructions(sock):
+    add_user_clientSide("bob","1234",sock)
+    time.sleep(1)
+    login("bob","1234",sock)
+    time.sleep(1)
+    send_msg(sock,'T heres my message'.encode('utf-8'))
+        
     
  
 
